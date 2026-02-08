@@ -1,0 +1,268 @@
+###############################################
+# LAMMPS script for a polymer
+###############################################
+
+###
+# Box and units  (use LJ units and periodic boundaries)
+###
+
+# Initialize simulation
+units lj                # Use Lennard-Jones units
+dimension 3             # 3D simulation
+boundary p p p        # Periodic boundaries in all directions
+atom_style full       # Simple atomic style, no bonds or charges
+neighbor 5 bin
+
+###
+# Pair interactions require lists of neighbours to be calculated
+###
+neighbor 5 bin
+neigh_modify every 1 delay 0 check yes 
+
+variable bsize equal 1000
+variable rsize equal 1
+##############################  gel #########################
+variable bsizeh equal 2.5*${bsize}+${rsize}
+variable bsizel equal 2.5*${bsize}-${rsize}
+variable bsizeyzh equal ${bsize}/2+${rsize}
+variable bsizeyzl equal ${bsize}/2-${rsize}
+region box block -20 10020 0 ${bsize} 0 ${bsize}
+create_box 35 box bond/types 2 angle/types 1 extra/bond/per/atom 20 extra/special/per/atom 20 extra/angle/per/atom 20 # Create box for 2 atom types
+
+#set type * mass 1
+
+# Override if passed from the command l
+
+variable seed equal 9284
+
+#read_data DNA_coordinates_test.data extra/bond/per/atom 2 extra/special/per/atom 10 extra/angle/per/atom 2
+read_data DNA_coordinates_21_small.data extra/bond/per/atom 2 extra/special/per/atom 10 extra/angle/per/atom 2 add append shift 500 500 500
+#region region_DNA block ${bsizel} ${bsizeh} ${bsizeyzl} ${bsizeyzh} ${bsizeyzl} ${bsizeyzh}
+
+#molecule DNA_28 DNA_results.templates_3_12400000_28
+#create_atoms 0 random 1 123475 region_DNA mol DNA_28 126354 maxtry 3000 overlap 2
+#molecule DNA_29 DNA_results.templates_3_12400000_29
+#create_atoms 0 random 1 123475 region_DNA mol DNA_29 126354 maxtry 3000 overlap 2
+mass * 1
+
+restart 100000 polymer.restart_control_3
+bond_style hybrid harmonic fene
+special_bonds fene #<=== I M P O R T A N T prevents LJ from being counted twice
+bond_coeff   1 fene  30   3   1.0   2.0  # Adjust sigma to 2.0 in FEN
+bond_coeff 2 harmonic 30 2  # Bond type 2: Harmonic bond (DNA-protein crosslink)
+## Between non-bonded atoms
+pair_style   lj/cut 2.24492305924378     # The cutoff should be ~2.2449 when sigma = 2.0
+pair_modify shift yes        # option to ensure energy is calculated corectly
+#  pair_coeff for LJ, specify 4:
+#    * atom type interacting with
+#    * atom type
+#    * energy
+#    * mean diameter of the two atom types
+#    * cutoff
+pair_coeff   * * 2 2.4 2.64492305924378 # Adjust sigma to 2.0 in LJ
+#pair_coeff 1 1 1 2 3.24494
+
+print "pair!"
+
+
+## angles
+angle_style  cosine
+angle_coeff   1  25.0
+# this choice gives a polymer with the same persistence length as DNA
+
+print "angle!"
+
+# Immediately after switching to FENE and LJ
+timestep 0.001
+
+set type * charge -1
+
+print "set!"
+
+dump myDump all custom 5000 dump.control_3_small_21_200_9284_2000000 id type mol x y z ix iy iz
+# every 1000 time steps, each atom's id, type, x,y,z coords and x,y,z image flages are output.
+# image flags count how many times each atom has moved through a periodic boundary
+
+dump force_dump all custom 5000 forces.dump_control_3_small_21_200_9284_2000000 id type x y z fx fy fz vx vy vz
+
+compute myPairs all pair/local dist fx fy fz
+
+compute bond_name all property/local batom1 batom2 btype
+dump bond_name_dump all local 5000 dump.bond_name_control_3_small_21_200_9284_2000000 index c_bond_name[3] c_bond_name[1] c_bond_name[2] 
+
+compute bond_local all bond/local dist engpot fx fy fz 
+dump bond_dump all local 5000 dump.bond_local_control_3_small_21_200_9284_2000000 index c_bond_local[1] c_bond_local[2] c_bond_local[3] c_bond_local[4] c_bond_local[5] 
+
+compute angle_name all property/local aatom1 aatom2 aatom3 atype
+dump angle_name_dump all local 5000 dump.angle_name_control_3_small_21_200_9284_2000000 index c_angle_name[4] c_angle_name[1] c_angle_name[2] c_angle_name[3]
+
+compute angle_local all angle/local eng theta
+dump angle_dump all local 5000 dump.angle_local_control_3_small_21_200_9284_2000000 index c_angle_local[1] c_angle_local[2] 
+
+
+compute pairForce all pair/local dist dx dy dz fx fy fz
+compute bondForce all bond/local fx fy fz
+dump force_dump1 all local 5000 forces.dump_pair c_pairForce[1] c_pairForce[2] c_pairForce[3] c_pairForce[4] c_pairForce[5] c_pairForce[6] c_pairForce[7]
+dump force_dump2 all local 5000 forces.dump_bond c_bondForce[1] c_bondForce[2] c_bondForce[3]
+
+# Monitor forces in the log file
+#compute force all property/atom fx fy fz
+#thermo_style custom step temp pe c_force[1] c_force[2] c_force[3]
+
+fix xwalls all indent 10 plane x 3000 hi
+fix xlowalls all indent 10 plane x 0 lo
+
+#fix ywalls all indent 10 plane y ${bsize} hi
+#fix ylowalls all indent 10 plane y 0 lo
+
+#fix zwalls all indent 10 plane z ${bsize} hi
+#fix zlowalls all indent 10 plane z 0 lo
+
+thermo 10000
+
+
+# Time integration (nve, as there's no thermostat needed)
+fix 21 all nve           # Integrate using NVE (constant Energy)
+
+fix 31 all langevin 1 1 1 9284
+
+write_dump all atom before_run_dump.atom
+write_dump all custom before_run_dump.mol id type mol x y z ix iy iz 
+
+print "write!"
+
+#run 0
+       # Run the simulation for 1000 timesteps
+#print "run0!"
+
+minimize 1.0e-4 1.0e-6 100 1000
+
+print "minimize!"
+#minimize 1.0e-4 1.0e-6 100 1000
+#minimize 1.0e-4 1.0e-6 100 1000
+
+timestep 0.01
+
+run 1000000
+
+fix 41 all efield -1.5 0.0 0.0  # Apply electric field with strength 1.0 in the x-direction
+
+timestep 0.002
+
+unfix 21
+unfix 31
+
+
+unfix xwalls
+
+         # Integrate using NVE (constant Energy)
+fix 22 all nve           # Integrate using NVE (constant Energy)
+
+fix 32 all langevin 1 1 1 9284
+
+
+#unfix xlowalls
+
+
+# Loop to create spheres with random radii and positions
+# Loop to create spheres with random radii and positions
+label loop_start1
+
+# Generate random positions for the sphere
+variable xpos1 equal random(330,10020,${seed})
+variable xpos2 equal random(330,10020,${seed})
+variable ypos equal random(0,${bsize},${seed})
+variable zpos equal random(0,${bsize},${seed})
+variable radius equal random(1,3,${seed})
+# Create the sphere indenter with the current radius and position
+
+
+# Increment the loop counter
+variable i loop 200
+region regiony${i} cylinder y ${xpos1} ${zpos} ${radius} 0 ${bsize}
+region regionz${i} cylinder z ${xpos2} ${ypos} ${radius} 0 ${bsize}
+print "region $i y ${xpos1} ${zpos} ${radius} "
+print "region $i z ${xpos2} ${ypos} ${radius} "
+next i
+jump in.control_3_small_21_200_9284 loop_start1
+
+region region_combined union 400 regiony1 regionz1 regiony2 regionz2 regiony3 regionz3 regiony4 regionz4 regiony5 regionz5 regiony6 regionz6 regiony7 regionz7 regiony8 regionz8 regiony9 regionz9 regiony10 regionz10 regiony11 regionz11 regiony12 regionz12 regiony13 regionz13 regiony14 regionz14 regiony15 regionz15 regiony16 regionz16 regiony17 regionz17 regiony18 regionz18 regiony19 regionz19 regiony20 regionz20 regiony21 regionz21 regiony22 regionz22 regiony23 regionz23 regiony24 regionz24 regiony25 regionz25 regiony26 regionz26 regiony27 regionz27 regiony28 regionz28 regiony29 regionz29 regiony30 regionz30 regiony31 regionz31 regiony32 regionz32 regiony33 regionz33 regiony34 regionz34 regiony35 regionz35 regiony36 regionz36 regiony37 regionz37 regiony38 regionz38 regiony39 regionz39 regiony40 regionz40 regiony41 regionz41 regiony42 regionz42 regiony43 regionz43 regiony44 regionz44 regiony45 regionz45 regiony46 regionz46 regiony47 regionz47 regiony48 regionz48 regiony49 regionz49 regiony50 regionz50 regiony51 regionz51 regiony52 regionz52 regiony53 regionz53 regiony54 regionz54 regiony55 regionz55 regiony56 regionz56 regiony57 regionz57 regiony58 regionz58 regiony59 regionz59 regiony60 regionz60 regiony61 regionz61 regiony62 regionz62 regiony63 regionz63 regiony64 regionz64 regiony65 regionz65 regiony66 regionz66 regiony67 regionz67 regiony68 regionz68 regiony69 regionz69 regiony70 regionz70 regiony71 regionz71 regiony72 regionz72 regiony73 regionz73 regiony74 regionz74 regiony75 regionz75 regiony76 regionz76 regiony77 regionz77 regiony78 regionz78 regiony79 regionz79 regiony80 regionz80 regiony81 regionz81 regiony82 regionz82 regiony83 regionz83 regiony84 regionz84 regiony85 regionz85 regiony86 regionz86 regiony87 regionz87 regiony88 regionz88 regiony89 regionz89 regiony90 regionz90 regiony91 regionz91 regiony92 regionz92 regiony93 regionz93 regiony94 regionz94 regiony95 regionz95 regiony96 regionz96 regiony97 regionz97 regiony98 regionz98 regiony99 regionz99 regiony100 regionz100 regiony101 regionz101 regiony102 regionz102 regiony103 regionz103 regiony104 regionz104 regiony105 regionz105 regiony106 regionz106 regiony107 regionz107 regiony108 regionz108 regiony109 regionz109 regiony110 regionz110 regiony111 regionz111 regiony112 regionz112 regiony113 regionz113 regiony114 regionz114 regiony115 regionz115 regiony116 regionz116 regiony117 regionz117 regiony118 regionz118 regiony119 regionz119 regiony120 regionz120 regiony121 regionz121 regiony122 regionz122 regiony123 regionz123 regiony124 regionz124 regiony125 regionz125 regiony126 regionz126 regiony127 regionz127 regiony128 regionz128 regiony129 regionz129 regiony130 regionz130 regiony131 regionz131 regiony132 regionz132 regiony133 regionz133 regiony134 regionz134 regiony135 regionz135 regiony136 regionz136 regiony137 regionz137 regiony138 regionz138 regiony139 regionz139 regiony140 regionz140 regiony141 regionz141 regiony142 regionz142 regiony143 regionz143 regiony144 regionz144 regiony145 regionz145 regiony146 regionz146 regiony147 regionz147 regiony148 regionz148 regiony149 regionz149 regiony150 regionz150 regiony151 regionz151 regiony152 regionz152 regiony153 regionz153 regiony154 regionz154 regiony155 regionz155 regiony156 regionz156 regiony157 regionz157 regiony158 regionz158 regiony159 regionz159 regiony160 regionz160 regiony161 regionz161 regiony162 regionz162 regiony163 regionz163 regiony164 regionz164 regiony165 regionz165 regiony166 regionz166 regiony167 regionz167 regiony168 regionz168 regiony169 regionz169 regiony170 regionz170 regiony171 regionz171 regiony172 regionz172 regiony173 regionz173 regiony174 regionz174 regiony175 regionz175 regiony176 regionz176 regiony177 regionz177 regiony178 regionz178 regiony179 regionz179 regiony180 regionz180 regiony181 regionz181 regiony182 regionz182 regiony183 regionz183 regiony184 regionz184 regiony185 regionz185 regiony186 regionz186 regiony187 regionz187 regiony188 regionz188 regiony189 regionz189 regiony190 regionz190 regiony191 regionz191 regiony192 regionz192 regiony193 regionz193 regiony194 regionz194 regiony195 regionz195 regiony196 regionz196 regiony197 regionz197 regiony198 regionz198 regiony199 regionz199 regiony200 regionz200 
+
+timestep 0.002
+
+# Define a loop that repeats the region selection and grouping process every 1000 timesteps
+variable step equal 5000
+variable n loop 2000  # Adjust this to control how many times the process repeats
+# Create an empty group to store all the atoms from the identified molecules
+group newgroup empty
+group combined_combined_group empty
+dump dumpnew newgroup custom 1000 group_output_100_30.txt id mol type x y z
+dump dumpcombined combined_combined_group custom 1000 group_combined_output_100_30.txt id mol type x y z
+label loop_step
+
+    # Group atoms within the region
+  group combined_group region region_combined
+  group combined_combined_group union combined_combined_group combined_group
+
+        # Assume 'oldgroup' is the group you want to work with
+
+    # Step 1: Determine the number of atoms in 'oldgroup'
+    variable numatoms equal count(combined_group)
+    #variable num_atoms equal ${numatoms}
+
+
+    
+    # Step 2: Loop over all atoms in the old group
+    #if numatoms==0, jump
+    print "${numatoms}"
+    if "${numatoms} == 0" then "jump in.control_3_small_21_200_9284 skip_newgroup"
+    variable atomID atom gmask(combined_group)    #all atoms in that region
+    #print "atomID: v_atomID"
+    variable total_atoms equal count(all)
+    variable atomi loop ${total_atoms}  #iterate for every atom
+    label loop_start
+      # Get the atom ID for the i-th atom in 'oldgroup'
+      
+     #variable vtest equal v_atomID[1]
+      # Get the molecule ID for that atom
+      variable vtest equal v_atomID[v_atomi] 
+      
+      if "${vtest}==0" then "jump in.control_3_small_21_200_9284 skip_group"
+      # Add all atoms with this molecule ID to a temporary group
+      variable molid equal mol[v_atomi]
+      print "v ${atomi} ${vtest} ${molid}"
+      group tempgroup molecule ${molid}
+      variable newgroup_atoms equal count(tempgroup)
+      #print "now tempgroup atoms ${newgroup_atoms}"
+      # Union the temporary group with the new group
+      group newgroup union newgroup tempgroup
+      group tempgroup clear
+        label skip_group
+    next atomi
+    jump in.control_3_small_21_200_9284 loop_start
+    
+    # Optional: Output the new group details
+    print "New group 'newgroup' now contains all atoms from the molecules of the atoms in 'oldgroup'"
+
+  label skip_newgroup
+  # Optional: Apply operations to the combined group
+  
+fix fix_viscous newgroup viscous 10
+
+  # Run for 1000 timesteps
+  run ${step} every 1000 "print 'Selected new regions and updated groups.'"
+  
+  unfix fix_viscous
+  group combined_group delete
+  group combined_combined_group clear
+  group newgroup clear
+
+  
+next n
+jump in.control_3_small_21_200_9284 loop_step
+
+
+
+
+#fix yzwalls dna wall/reflect ylo 0 yhi 108 zlo 0 zhi 108
+thermo_modify lost warn lost/bond warn
